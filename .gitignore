@@ -1,0 +1,19 @@
+# Python cache and byte code
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Generated configuration files
+docker-compose.yml
+nginx.conf
+nginx.temp.conf
+
+# Editor and system backup files
+*~
+*.swp
+.DS_Store
+
+# Environment or temporary state files
+manifest_clean.yaml
+docker-compose_clean.yaml

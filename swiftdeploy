@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+"""
+swiftdeploy — CLI tool that manages the SwiftDeploy stack lifecycle.
+"""
+
+import sys
+import subprocess
+import time
+import socket
+import json
+import urllib.request
+from pathlib import Path
+
+try:
+    import yaml
+    from jinja2 import Environment, FileSystemLoader, TemplateNotFound
+except ImportError as e:
+    print(f"Missing dependency: {e}")
+    print("Run: pip install pyyaml jinja2")
+    sys.exit(1)
+
+
+# ── Paths ───────────────────────────────────────────────────────────────
+PROJECT_ROOT  = Path(__file__).parent.resolve()
+MANIFEST_PATH = PROJECT_ROOT / "manifest.yaml"
+TEMPLATES_DIR = PROJECT_ROOT / "templates"
+COMPOSE_FILE  = PROJECT_ROOT / "docker-compose.yml"
+NGINX_CONF    = PROJECT_ROOT / "nginx.conf"
+
+
+# ── UI Helpers ──────────────────────────────────────────────────────────
+GREEN  = "\033[92m"
+RED    = "\033[91m"
+YELLOW = "\033[93m"
+BLUE   = "\033[94m"
+CYAN   = "\033[96m"
+BOLD   = "\033[1m"
+RESET  = "\033[0m"
+
+def ok(msg):   print(f"  {GREEN}✔{RESET}  {msg}")
+def fail(msg): print(f"  {RED}✘{RESET}  {msg}")
+def info(msg): print(f"  {BLUE}ℹ{RESET}  {msg}")
+def warn(msg): print(f"  {YELLOW}⚠{RESET}  {msg}")
+def step(msg): print(f"\n{BOLD}{CYAN}> {msg}{RESET}")
+def banner(msg):
+    print(f"\n{BOLD}{BLUE}{'='*60}{RESET}")
+    print(f"{BOLD}{BLUE}  {msg}{RESET}")
+    print(f"{BOLD}{BLUE}{'='*60}{RESET}")
+
+
+# ── Manifest ────────────────────────────────────────────────────────────
+def load_manifest():
+    if not MANIFEST_PATH.exists():
+        fail("manifest.yaml not found")
+        sys.exit(1)
+    with open(MANIFEST_PATH, encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def build_context(manifest):
+    svc   = manifest.get("services", {})
+    nginx = manifest.get("nginx", {})
+    net   = manifest.get("network", {})
+
+    return {
+        "service_name": svc.get("name", "app"),
+        "service_image": svc.get("image", ""),
+        "service_port": svc.get("port", 3000),
+        "app_version": svc.get("version", "1.0.0"),
+        "mode": svc.get("mode", "stable"),
+        "nginx_image": nginx.get("image", "nginx:latest"),
+        "nginx_port": nginx.get("port", 8080),
+        "proxy_timeout": nginx.get("proxy_timeout", 30),
+        "network_name": net.get("name", "swiftdeploy-net"),
+        "network_driver": net.get("driver_type", "bridge"),
+    }
+
+
+# ── INIT ────────────────────────────────────────────────────────────────
+def cmd_init():
+    banner("SwiftDeploy Init")
+
+    manifest = load_manifest()
+    context  = build_context(manifest)
+
+    env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR), encoding="utf-8"))
+
+    nginx_template = env.get_template("nginx.conf.j2")
+    compose_template = env.get_template("docker-compose.yml.j2")
+
+    NGINX_CONF.write_text(nginx_template.render(**context), encoding="utf-8")
+    COMPOSE_FILE.write_text(compose_template.render(**context), encoding="utf-8")
+
+    ok("nginx.conf + docker-compose.yml generated")
+
+
+# ── VALIDATE ────────────────────────────────────────────────────────────
+def cmd_validate():
+    banner("SwiftDeploy Validate")
+
+    results = []
+    manifest = load_manifest()
+
+    # Check 1
+    step("Check 1: manifest exists")
+    ok("manifest.yaml found")
+    results.append(True)
+
+    # Check 2
+    step("Check 2: required fields")
+    if not manifest.get("services", {}).get("image"):
+        fail("Missing services.image")
+        results.append(False)
+    else:
+        ok("Required fields present")
+        results.append(True)
+
+    # Check 3
+    step("Check 3: docker image exists")
+    image = manifest["services"]["image"]
+    r = subprocess.run(["docker", "image", "inspect", image], capture_output=True)
+    if r.returncode == 0:
+        ok("Image exists")
+        results.append(True)
+    else:
+        fail("Image missing")
+        results.append(False)
+
+    # Check 4
+    step("Check 4: port availability")
+    port = manifest["nginx"]["port"]
+    s = socket.socket()
+    in_use = s.connect_ex(("127.0.0.1", port)) == 0
+    s.close()
+
+    if in_use:
+        fail(f"Port {port} in use")
+        results.append(False)
+    else:
+        ok("Port available")
+        results.append(True)
+
+    # Check 5 (FIXED)
+    step("Check 5: nginx config syntax")
+
+    if not NGINX_CONF.exists():
+        cmd_init()
+
+    temp_conf = PROJECT_ROOT / "nginx.temp.conf"
+
+    with open(NGINX_CONF, encoding="utf-8") as f:
+        content = f.read()
+
+    service = manifest["services"]["name"]
+    port = manifest["services"]["port"]
+
+    content = content.replace(f"{service}:{port}", f"localhost:{port}")
+
+    temp_conf.write_text(content, encoding="utf-8")
+
+    r = subprocess.run([
+        "docker", "run", "--rm",
+        "-v", f"{temp_conf}:/etc/nginx/nginx.conf:ro",
+        "nginx:alpine",
+        "nginx", "-t"
+    ], capture_output=True, text=True)
+
+    temp_conf.unlink(missing_ok=True)
+
+    if r.returncode == 0:
+        ok("nginx config valid")
+        results.append(True)
+    else:
+        fail("nginx config invalid")
+        print(r.stderr)
+        results.append(False)
+
+    # Summary
+    if all(results):
+        ok("All checks passed")
+        return True
+    else:
+        fail("Validation failed")
+        sys.exit(1)
+
+
+# ── DEPLOY ──────────────────────────────────────────────────────────────
+def cmd_deploy():
+    banner("SwiftDeploy Deploy")
+
+    cmd_init()
+    cmd_validate()
+
+    subprocess.run(["docker", "compose", "up", "-d", "--build"])
+
+    ok("Stack running")
+
+
+def save_manifest(manifest):
+    with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
+        yaml.safe_dump(manifest, f, sort_keys=False)
+
+
+def cmd_promote(target):
+    banner("SwiftDeploy Promote")
+
+    if target not in ("stable", "canary"):
+        fail("Unknown promote target. Use 'stable' or 'canary'.")
+        sys.exit(1)
+
+    manifest = load_manifest()
+    current = manifest.get("services", {}).get("mode", "stable")
+
+    if current == target:
+        info(f"Already in {target} mode")
+        return
+
+    manifest.setdefault("services", {})["mode"] = target
+    save_manifest(manifest)
+    ok(f"manifest mode set to {target}")
+
+    cmd_init()
+    info("Applying updated stack")
+
+    r = subprocess.run(["docker", "compose", "up", "-d", "--build"])
+    if r.returncode == 0:
+        ok("Stack updated")
+    else:
+        fail("Failed to apply stack changes")
+        sys.exit(r.returncode)
+
+
+def cmd_teardown():
+    banner("SwiftDeploy Teardown")
+
+    step("Stopping and removing containers")
+    r = subprocess.run(["docker", "compose", "down", "-v"], cwd=PROJECT_ROOT)
+    if r.returncode == 0:
+        ok("Stack removed")
+    else:
+        fail("Failed to remove stack")
+        sys.exit(r.returncode)
+
+    if "--clean" in sys.argv:
+        step("Deleting generated configs")
+        NGINX_CONF.unlink(missing_ok=True)
+        COMPOSE_FILE.unlink(missing_ok=True)
+        ok("Generated files deleted")
+
+
+# ── MAIN ───────────────────────────────────────────────────────────────────────────────
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: ./swiftdeploy [init|validate|deploy|promote <stable|canary>|teardown [--clean]]")
+        return
+
+    cmd = sys.argv[1]
+
+    if cmd == "init":
+        cmd_init()
+    elif cmd == "validate":
+        cmd_validate()
+    elif cmd == "deploy":
+        cmd_deploy()
+    elif cmd == "promote":
+        if len(sys.argv) < 3:
+            print("Usage: ./swiftdeploy promote <stable|canary>")
+            return
+        cmd_promote(sys.argv[2])
+    elif cmd == "teardown":
+        cmd_teardown()
+    else:
+        print("Unknown command")
+
+
+if __name__ == "__main__":
+    main()
