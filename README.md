@@ -2,7 +2,7 @@
 
 A declarative infrastructure CLI that generates, deploys, and manages a
 containerised API service from a single `manifest.yaml` source of truth.
-
+screenshots: https://drive.google.com/drive/folders/1eDHp2k1BIqtN-xjNz5T_597Yw6KWkjsS?usp=drive_link
 ## Prerequisites
 
 - Docker 24+
