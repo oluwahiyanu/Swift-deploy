@@ -1,13 +1,24 @@
-services:
-  name: app
-  image: swift-deploy-1-node:latest
-  port: 3000
-  version: 1.0.0
-  mode: stable
+network:
+  driver_type: bridge
+  name: swiftdeploy-net
 nginx:
   image: nginx:latest
   port: 8080
   proxy_timeout: 30
-network:
-  name: swiftdeploy-net
-  driver_type: bridge
+opa:
+  image: openpolicyagent/opa:latest
+  port: 8181
+policy:
+  canary_safety:
+    max_error_rate: 0.01
+    max_p99_latency_ms: 500
+  infrastructure:
+    max_cpu_load: 80.0
+    min_disk_free_gb: 10.0
+    min_memory_free_percent: 10.0
+services:
+  image: swift-deploy-1-node:latest
+  mode: canary
+  name: app
+  port: 3000
+  version: 1.0.0

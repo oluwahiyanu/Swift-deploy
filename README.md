@@ -1,36 +1,37 @@
 # SwiftDeploy
+<<<<<<< HEAD
 
 A declarative infrastructure CLI that generates, deploys, and manages a
 containerised API service from a single `manifest.yaml` source of truth.
 screenshots: https://drive.google.com/drive/folders/1eDHp2k1BIqtN-xjNz5T_597Yw6KWkjsS?usp=drive_link
+=======
+A declarative infrastructure CLI that generates, deploys, and manages a containerised API service with built-in instrumentation and pre-deployment OPA policy checks from a single manifest.yaml source of truth.
+
+>>>>>>> a55980a (feat: complete Phase 2 with instrumentation, OPA policy checks, and README updates)
 ## Prerequisites
 
-- Docker 24+
-- Docker Compose v2
-- Python 3.10+
-- `pip3 install pyyaml jinja2`
+Docker 24+
+Docker Compose v2
+Python 3.10+
+pip3 install pyyaml jinja2 prometheus_client
 
 ## Quick Start
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/YOUR_USERNAME/swiftdeploy-prod.git
 cd swiftdeploy-prod
 
 # 2. Build the app image
 docker build -t swift-deploy-1-node:latest ./app
 
-# 3. Install Python deps
-pip3 install pyyaml jinja2
-
-# 4. Make CLI executable
+# 3. Make CLI executable
 chmod +x swiftdeploy
 
-# 5. Deploy
+# 4. Deploy (runs pre-deploy OPA policy check automatically)
 ./swiftdeploy deploy
 
-# 6. Open the service
-curl http://localhost:8080/
+# 5. Verify X-Mode Headers
+curl -I http://localhost:8080/
 ```
 
 ## Subcommands
@@ -49,16 +50,20 @@ curl http://localhost:8080/
 
 ```
 swiftdeploy-prod/
-├── manifest.yaml          ← edit this only
+├── manifest.yaml          ← Edit this only
 ├── swiftdeploy            ← CLI executable
-├── nginx.conf             ← auto-generated (project root)
-├── docker-compose.yml     ← auto-generated (project root)
+├── nginx.conf             ← Auto-generated reverse proxy rules
+├── docker-compose.yml     ← Auto-generated multi-container composition
+├── history.jsonl          ← Audit trail of metrics collection
+├── audit_report.md        ← Generated validation report
 ├── app/
 │   ├── main.py
 │   ├── requirements.txt
 │   └── Dockerfile
-├── templates/
-│   ├── nginx.conf.j2
-│   └── docker-compose.yml.j2
-└── README.md
+├── policies/
+│   ├── infrastructure.rego
+│   └── canary_safety.rego
+└── templates/
+    ├── docker-compose.yml.j2
+    └── nginx.conf.j2
 ```
