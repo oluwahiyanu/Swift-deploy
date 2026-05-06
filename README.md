@@ -1,10 +1,4 @@
 # SwiftDeploy
-<<<<<<< HEAD
-
-A declarative infrastructure CLI that generates, deploys, and manages a
-containerised API service from a single `manifest.yaml` source of truth.
-screenshots: https://drive.google.com/drive/folders/1eDHp2k1BIqtN-xjNz5T_597Yw6KWkjsS?usp=drive_link
-=======
 A declarative infrastructure CLI that generates, deploys, and manages a containerised API service with built-in instrumentation and pre-deployment OPA policy checks from a single manifest.yaml source of truth.
 
 >>>>>>> a55980a (feat: complete Phase 2 with instrumentation, OPA policy checks, and README updates)
